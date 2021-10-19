@@ -1,1 +1,1 @@
-# nn-agarPlates
+# nn-agar-plates
