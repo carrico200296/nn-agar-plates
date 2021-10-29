@@ -74,7 +74,7 @@ def make_layers(cfg, batch_norm=False):
         else:
             # pad2d = nn.ReflectionPad2d(padding=1)
             # layers += [pad2d]
-            print("##################Reflection Padding#######################")
+            #print("##################Reflection Padding#######################")
             conv2d = nn.Conv2d(in_channels, v, kernel_size=3)
             # conv2d = nn.Conv2d(in_channels, v, kernel_size=3, padding=1)
             if batch_norm:

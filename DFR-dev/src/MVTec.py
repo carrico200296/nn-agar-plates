@@ -4,14 +4,14 @@ import torch
 from torch.utils.data import Dataset
 import torchvision.transforms as transforms
 from PIL import Image
-from skimage.io import imread
+from skimage.io import imread, imshow
 from skimage.transform import resize
 
 
 def get_image_files(path, mode='train'):
     images = []
     ext = {'.jpg', '.png'}
-#     path = "/home/jie/Datasets/mvtec-anomaly/bottle/test"
+    #path = "/home/jie/Datasets/mvtec-anomaly/bottle/test"
     for root, dirs, files in os.walk(path):
         print('loading image files ' + root)
         for file in files:
@@ -23,11 +23,10 @@ def get_image_files(path, mode='train'):
                     images.append(os.path.join(root, file))
     return sorted(images)
 
-
 def get_mask_files(path):
     masks = []
     ext = {'.jpg', '.png'}
-#     path = "/home/jie/Datasets/mvtec-anomaly/bottle/ground_truth"
+    #path = "/home/jie/Datasets/mvtec-anomaly/bottle/ground_truth"
     for root, dirs, files in os.walk(path):
         print('loading mask files ' + root)
         for file in files:
@@ -198,8 +197,11 @@ class TestDataset(Dataset):
                 mask = resize(mask, (256, 256))
             else:
                 mask_path = img_name.replace("test", "ground_truth").split(".")[-2] + "_mask.png"
-                mask = imread(mask_path, as_gray=True)
-                mask = resize(mask, (256, 256))
+                mask = Image.open(mask_path)
+                mask = mask.resize((256,256))
+                mask = np.array(mask)
+                #mask = imread(mask_path, as_gray=True)
+                #mask = resize(mask, (256, 256))
         return img, mask, img_name
 
     def _get_image_files(self, path, ext={'.jpg', '.png'}):
@@ -209,11 +211,43 @@ class TestDataset(Dataset):
                 continue
             print('loading image files ' + root)
             for file in files:
-                if os.path.splitext(file)[-1] in ext and 'checkpoint' not in file:
+                if os.path.splitext(file)[-1] in ext and "good" not in root:#and 'checkpoint' not in file:
                     images.append(os.path.join(root, file))
         return sorted(images)
 
-# np.pad()
+
+class InferenceDataset(Dataset):
+
+    def __init__(self, image_path, normalize=True):
+        self.img_files = self._get_image_files(image_path)
+        self.len = len(self.img_files)
+
+        # transformer
+        resize = transforms.Resize(size=(256, 256), interpolation=Image.NEAREST)
+        if normalize:
+            normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406],
+                                             std=[0.229, 0.224, 0.225])
+            self.transform = transforms.Compose([resize, transforms.ToTensor(), normalize])
+        else:
+            self.transform = transforms.Compose([resize, transforms.ToTensor()])
+
+    def __len__(self):
+        return self.len
+
+    def __getitem__(self, idx):
+        """
+        """
+        img = Image.open(self.img_files[idx])
+        if self.transform is not None:
+            img = self.transform(img)
+        img_name = self.img_files[idx]
+
+        return img, img_name
+
+    def _get_image_files(self, image_path):
+        images = []
+        images.append(image_path)
+        return sorted(images)
 
 # ---------------------------------------------------------------------------- #
 # For supervised learning and performance boundary analysis.
@@ -398,10 +432,11 @@ def build_dataset_from_featmap(x, mask=None, ksize=5, stride=5, agg_type='avg', 
 
     return xx, mm
 
+
 if __name__ == "__main__":
     data_name = "bottle"
-    train_data_path = "/home/jovyan/work/dataset/MVAomaly/"+ data_name + "/train"
-    test_data_path = "/home/jovyan/work/dataset/MVAomaly/" + data_name + "/test"
+    train_data_path = os.getcwd() + "/dataset/" + data_name + "/train"
+    test_data_path = os.getcwd() + "/dataset/" + data_name + "/test"
     train_data = NormalDataset(path=train_data_path)
     test_data = TestDataset(path=test_data_path)
     # print(train_data.img_files)
@@ -409,22 +444,36 @@ if __name__ == "__main__":
         print(img_file)
 
     # # data loader
-    # from torch.utils.data import DataLoader
+    from torch.utils.data import DataLoader
+    from PIL import Image 
+    import matplotlib.pyplot as plt
+    import time
     # # train_data_loader = DataLoader(train_data, batch_size=1, shuffle=True, num_workers=1)
     # # for normal_img in train_data_loader:
     # #     print("#############")
     # #     print(normal_img.shape)
 
+    test_data_loader = DataLoader(test_data, batch_size=1, shuffle=False, num_workers=1)
+    for abnormal_img, mask, abnormal_img_name in test_data_loader:
+        print("#############")
+        print(abnormal_img_name[0][97:-1])
+        print(abnormal_img.shape) # can be transformed to numpy using .numpy()
+        print(mask.shape) # can be transformed to numpy using .numpy()
+        print(mask.max(), mask.min())
 
-    # test_data_loader = DataLoader(test_data, batch_size=1, shuffle=False, num_workers=1)
-    # for abnormal_img, mask, abnormal_img_name in test_data_loader:
-    #     print("#############")
-    #     print(abnormal_img_name)
-    #     print(abnormal_img.shape)
-    #     print(mask.shape)
-    #     print(mask.max(), mask.min())
+        # creating a object 
+        mask_image = mask.numpy().squeeze()
+        plt.imshow(mask_image)
+        plt.show()
 
+        im = Image.open(abnormal_img_name[0])
+        im = im.resize((256,256))
+        im.show()
 
-
-
-
+        abnormal_img = np.array(abnormal_img.numpy())
+        abnormal_img = np.moveaxis(abnormal_img.squeeze(), 0, -1)
+        print(abnormal_img.shape)
+        image = Image.fromarray(abnormal_img,)
+        image.show()
+        
+        break

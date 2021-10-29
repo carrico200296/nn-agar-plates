@@ -1,27 +1,24 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-#from extractors.feature import Extractor
-from feature import Extractor
 from torch.utils.data import DataLoader
+import torchvision.transforms as transforms
 import torch.optim as optim
-#from data.MVTec import NormalDataset, TrainTestDataset
 
 import time
 import datetime
 import os
 import numpy as np
+import pandas as pd
+from PIL import Image 
 import matplotlib.pyplot as plt
 from skimage.io import imsave
 from skimage import measure
 from skimage.transform import resize
-import pandas as pd
-
-from feat_cae import FeatCAE
-
-import joblib
 from sklearn.decomposition import PCA
 
+from feature import Extractor
+from feat_cae import FeatCAE
 from utils import *
 
 
@@ -64,9 +61,9 @@ class AnoSegDFR():
         # dataloader
         self.train_data_loader = DataLoader(self.train_data, batch_size=cfg.batch_size, shuffle=True, num_workers=2)
         self.test_data_loader = DataLoader(self.test_data, batch_size=1, shuffle=False, num_workers=1)
-        self.eval_data_loader = DataLoader(self.train_data, batch_size=10, shuffle=False, num_workers=2)
-
-
+        self.eval_data_loader = DataLoader(self.train_data, batch_size=cfg.batch_size, shuffle=False, num_workers=2) # with cuda batch_size=10 works
+        #IMPORTANT: the model has to be loaded with the same bath_size used during the training (example: --batch_size 2)
+        
         # autoencoder classifier
         self.autoencoder, self.model_name = self.build_classifier()
         if cfg.model_name != "":
@@ -85,6 +82,12 @@ class AnoSegDFR():
         self.eval_path = os.path.join(self.path, "models/" + self.subpath + "/eval")
         if not os.path.exists(self.eval_path):
             os.makedirs(self.eval_path)
+        
+        # Testing inference images
+        self.test_defect = cfg.test_defect
+        self.save_images_path = self.eval_path + '/' + self.test_defect
+        if not os.path.exists(self.save_images_path):
+            os.makedirs(self.save_images_path)
 
     def build_classifier(self):
         # self.load_dim(self.model_path)
@@ -133,6 +136,7 @@ class AnoSegDFR():
         else:
             dataset = TestDataset(path=abnormal_data_path)
         return dataset
+
 
     def train(self):
         if self.load_model():
@@ -185,9 +189,8 @@ class AnoSegDFR():
                 # save model
                 self.save_model()
                 self.validation(epoch)
-
-#             print("Cost total time {}s".format(time.time() - start_time))
-#             print("Done.")
+            #print("Cost total time {}s".format(time.time() - start_time))
+            #print("Done.")
             self.tracking_loss(epoch, np.mean(np.array(losses)))
 
         # save model
@@ -242,7 +245,7 @@ class AnoSegDFR():
         scores = self.autoencoder.compute_energy(dec, input)
         scores = scores.reshape((1, 1, self.extractor.out_size[0], self.extractor.out_size[1]))    # test batch size is 1.
         scores = nn.functional.interpolate(scores, size=self.img_size, mode="bilinear", align_corners=True).squeeze()
-        # print("score shape:", scores.shape)
+        #print("score shape:", scores.shape)
         return scores
 
     def segment(self, input, threshold=0.5):
@@ -372,9 +375,6 @@ class AnoSegDFR():
             self.autoencoder.load_state_dict(data['autoencoder'])
             print("Model loaded:", model_path)
         return True
-
-    # def save_dim(self):
-    #     np.save(os.path.join(self.model_path, 'n_dim.npy'))
 
     def load_dim(self, model_path):
         dim_path = os.path.join(model_path, 'n_dim.npy')
@@ -614,7 +614,7 @@ class AnoSegDFR():
         
         # auc score (image level) for detection
         labels = masks.any(axis=1).any(axis=1)
-#         preds = scores.mean(1).mean(1)
+        #preds = scores.mean(1).mean(1)
         preds = scores.max(1).max(1)    # for detection
         det_auc_score = roc_auc_score(labels, preds)
         det_pr_score = average_precision_score(labels, preds)
@@ -666,7 +666,7 @@ class AnoSegDFR():
                     iou.append(intersection / union)
             # against steps and average metrics on the testing data
             ious_mean.append(np.array(iou).mean())
-#             print("per image mean iou:", np.array(iou).mean())
+            #print("per image mean iou:", np.array(iou).mean())
             ious_std.append(np.array(iou).std())
             pros_mean.append(np.array(pro).mean())
             pros_std.append(np.array(pro).std())
@@ -716,9 +716,161 @@ class AnoSegDFR():
         with open(os.path.join(self.eval_path, 'pr_auc_pro_iou_{}.csv'.format(expect_fpr)), mode='w') as f:
                 f.write("det_pr, det_auc, seg_pr, seg_auc, seg_pro, seg_iou\n")
                 f.write(f"{det_pr_score:.5f},{det_auc_score:.5f},{seg_pr_score:.5f},{seg_auc_score:.5f},{pro_auc_score:.5f},{best_miou:.5f}")    
-            
 
-    def metrics_detecion(self, expect_fpr=0.3, max_step=5000):
+    def evaluation_test_images(self):
+        from sklearn.metrics import auc
+        from sklearn.metrics import roc_auc_score, average_precision_score
+        from skimage import measure
+        import matplotlib.pyplot as plt
+        import pandas as pd
+
+        if self.load_model():
+            print("Model Loaded.")
+        else:
+            print("None pretrained models.")
+            return
+
+        time_start = time.time()
+        for i, (img, mask, img_path) in enumerate(self.test_data_loader):  # batch size is 1.
+            if self.test_defect in img_path[0]:            
+                masks = []
+                scores = []
+                # data
+                input_image = Image.open(img_path[0])
+                input_image = input_image.resize((256,256))
+                img = img.to(self.device)
+                mask = mask.squeeze().numpy()
+
+                # anomaly score
+                anomaly_map = self.score(img).data.cpu().numpy()
+
+                img_name = img_path[0][97:]
+                print("Image name {}".format(img_name))
+                print(":: Batch {},".format(i), "Cost total time {}s".format(time.time() - time_start))
+                time_start = time.time()
+
+                normalize = transforms.Normalize(0.5, 1)
+                transform = transforms.Compose([transforms.ToTensor(), normalize])
+                anomaly_map = transform(anomaly_map).numpy()
+
+                masks.append(mask)
+                scores.append(anomaly_map)
+                # as array
+                masks = np.array(masks)
+                scores = np.array(scores)
+
+                # Anomaly Binary map
+                binary_score_maps = np.zeros_like(scores, dtype=np.bool)
+                max_th = scores.max()
+                min_th = scores.min()
+                thred = (max_th - min_th)/4
+
+                # segmentation
+                binary_score_maps[scores <= thred] = 0
+                binary_score_maps[scores > thred] = 1
+
+                # Binary ground truth masks
+                masks[masks <= 0.5] = 0
+                masks[masks > 0.5] = 1
+                masks = masks.astype(np.bool)
+
+                # Display grount truth, anomaly score map and anomaly binary map
+                fig, axs = plt.subplots(nrows=1, ncols=4, figsize=(12, 4))
+                fig.suptitle('Inference Results Image: ' + img_name, fontsize=14)
+                axs[0].set_title('Input Image')
+                axs[0].imshow(input_image)
+
+                axs[1].set_title('Ground Truth')
+                axs[1].imshow(masks.squeeze())
+
+                axs[2].set_title('Anomaly Score map')
+                axs[2].imshow(scores.squeeze())
+
+                axs[3].set_title('Anomaly Binary map')
+                axs[3].imshow(binary_score_maps.squeeze()) 
+
+                plt.savefig(self.save_images_path + '/' + img_name[-7:])
+                plt.close(fig)
+                plt.show()
+
+                # auc score (per pixel level) for segmentation
+                seg_auc_score = roc_auc_score(masks.ravel(), scores.ravel())
+                seg_pr_score = average_precision_score(masks.ravel(), scores.ravel())
+                # metrics over all data
+                print(f":: Seg AUC: {seg_auc_score:.4f}")
+                print(f":: Seg PR: {seg_pr_score:.4f}")
+                
+            else:
+                continue
+
+    def evaluation_one_test_image(self, inference_image_path):
+        from sklearn.metrics import auc
+        from sklearn.metrics import roc_auc_score, average_precision_score
+        from skimage import measure
+        import matplotlib.pyplot as plt
+        import pandas as pd
+        from MVTec import InferenceDataset
+
+        if self.load_model():
+            print("Model Loaded.")
+        else:
+            print("None pretrained models.")
+            return
+
+        time_start = time.time()          
+        scores = []
+        # data
+        inference_dataset = InferenceDataset(inference_image_path)
+        inference_data_loader = DataLoader(inference_dataset, batch_size=1, num_workers=1)
+
+        for i, (img, img_path) in enumerate(inference_data_loader):  # batch size is 1.
+            input_image = Image.open(img_path[0])
+            input_image = input_image.resize((256,256))
+            img = img.to(self.device)
+
+            # anomaly score
+            anomaly_map = self.score(img).data.cpu().numpy()
+
+            img_name = img_path[0][97:]
+            print("Image name {}".format(img_name))
+            print(":: Cost total time {}s".format(time.time() - time_start))
+            time_start = time.time()
+
+            normalize = transforms.Normalize(0.5, 1)
+            transform = transforms.Compose([transforms.ToTensor(), normalize])
+            anomaly_map = transform(anomaly_map).numpy()
+
+            scores.append(anomaly_map)
+            scores = np.array(scores)
+
+            # Anomaly Binary map
+            binary_score_maps = np.zeros_like(scores, dtype=np.bool)
+            max_th = scores.max()
+            min_th = scores.min()
+            thred = (max_th - min_th)/4
+            
+            # segmentation
+            binary_score_maps[scores <= thred] = 0
+            binary_score_maps[scores > thred] = 1
+
+            # Display grount truth, anomaly score map and anomaly binary map
+            fig, axs = plt.subplots(nrows=1, ncols=3, figsize=(10, 4))
+            fig.suptitle('Inference Results Image: ' + img_name, fontsize=14)
+            axs[0].set_title('Input Image')
+            axs[0].imshow(input_image)
+
+            axs[1].set_title('Anomaly Score map')
+            axs[1].imshow(scores.squeeze())
+
+            axs[2].set_title('Anomaly Binary map')
+            axs[2].imshow(binary_score_maps.squeeze()) 
+
+            plt.savefig(self.save_images_path + '/' + img_name[-7:])
+            plt.close(fig)
+            plt.show()
+
+                
+    def metrics_detection(self, expect_fpr=0.3, max_step=5000):
         from sklearn.metrics import auc
         from sklearn.metrics import roc_auc_score, average_precision_score
         from skimage import measure
@@ -758,7 +910,7 @@ class AnoSegDFR():
         
         # auc score (image level) for detection
         labels = masks.any(axis=1).any(axis=1)
-#         preds = scores.mean(1).mean(1)
+        #preds = scores.mean(1).mean(1)
         preds = scores.max(1).max(1)    # for detection
         det_auc_score = roc_auc_score(labels, preds)
         det_pr_score = average_precision_score(labels, preds)

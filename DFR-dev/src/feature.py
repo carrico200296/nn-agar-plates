@@ -9,7 +9,6 @@ from vgg19 import VGG19
 #backbone_nets = {'vgg11': VGG11, 'vgg13': VGG13, 'vgg16': VGG16, 'vgg19': VGG19}
 backbone_nets = {'vgg19': VGG19}
 
-
 # aggregation
 class AvgFeatAGG2d(nn.Module):
     """
@@ -37,7 +36,7 @@ class AvgFeatAGG2d(nn.Module):
 
 class Extractor(nn.Module):
     r"""
-    Build muti-scale regional feature based on VGG-feature maps.
+    Build multi-scale regional feature based on VGG-feature maps.
     """
 
     def __init__(self, backbone='vgg19',
@@ -141,8 +140,9 @@ if __name__ == "__main__":
     import time
     vgg19_layers = ('relu1_1', 'relu1_2', 'relu2_1', 'relu2_2',
                     'relu3_1', 'relu3_2', 'relu3_3', 'relu3_4')
-
-    device = "cuda:1"
+    vgg19_layers = ('relu4_1', 'relu4_2', 'relu4_3', 'relu4_4')
+    
+    device = "cuda:0"
     extractor = Extractor(backbone="vgg19",
                           cnn_layers=vgg19_layers,
                           featmap_size=(256, 256),
