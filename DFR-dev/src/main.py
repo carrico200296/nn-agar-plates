@@ -59,7 +59,7 @@ def config():
 
 if __name__ == "__main__":
 
-    torch.cuda.empty_cache()
+    #torch.cuda.empty_cache()
     cfg = config()
 
     #IMPORTANT: the model has to be loaded with the same bath_size used during the training (example: --batch_size 2)
