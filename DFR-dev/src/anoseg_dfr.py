@@ -1,3 +1,5 @@
+from cv2 import transpose
+from numpy.ma import anom, maximum
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -16,10 +18,14 @@ from skimage.io import imsave
 from skimage import measure
 from skimage.transform import resize
 from sklearn.decomposition import PCA
+from torchvision.transforms.functional import InterpolationMode
 
 from feature import Extractor
 from feat_cae import FeatCAE
 from utils import *
+
+import wandb # ML experiment tracking, dataset versioning and project collaboration
+import tqdm 
 
 
 class AnoSegDFR():
@@ -28,7 +34,12 @@ class AnoSegDFR():
     """
     def __init__(self, cfg):
         super(AnoSegDFR, self).__init__()
-        self.cfg = cfg
+        WANDB_API_KEY = "d4ac6eb05d3b3932c222e4b9e6fe28f898830bf5"
+        wandb.login()
+        wandb.init(project="nn-agar-plates", config=cfg)
+
+        #self.config = cfg
+        self.cfg = wandb.config
         self.path = cfg.save_path    # model and results saving path
 
         self.n_layers = len(cfg.cnn_layers)
@@ -59,9 +70,9 @@ class AnoSegDFR():
         self.test_data = self.build_dataset(is_train=False)
 
         # dataloader
-        self.train_data_loader = DataLoader(self.train_data, batch_size=cfg.batch_size, shuffle=True, num_workers=2)
+        self.train_data_loader = DataLoader(self.train_data, batch_size=self.cfg.batch_size, shuffle=True, num_workers=2)
         self.test_data_loader = DataLoader(self.test_data, batch_size=1, shuffle=False, num_workers=1)
-        self.eval_data_loader = DataLoader(self.train_data, batch_size=cfg.batch_size, shuffle=False, num_workers=2) # with cuda batch_size=10 works
+        self.eval_data_loader = DataLoader(self.train_data, batch_size=self.cfg.batch_size, shuffle=False, num_workers=2) # with cuda batch_size=10 works
         #IMPORTANT: the model has to be loaded with the same bath_size used during the training (example: --batch_size 2)
         
         # autoencoder classifier
@@ -134,9 +145,8 @@ class AnoSegDFR():
         if is_train:
             dataset = NormalDataset(normal_data_path, normalize=True)
         else:
-            dataset = TestDataset(path=abnormal_data_path)
+            dataset = TestDataset(path=abnormal_data_path, normalize=False) #originally not normalize=False
         return dataset
-
 
     def train(self):
         if self.load_model():
@@ -144,6 +154,8 @@ class AnoSegDFR():
             return
 
         start_time = time.time()
+        # Tell wandb to watch what the model gets up to: gradients, weights, and more!
+        wandb.watch(self.autoencoder, self.autoencoder.loss_function, log="all", log_freq=10)
 
         # train
         iters_per_epoch = len(self.train_data_loader)  # total iterations every epoch
@@ -163,9 +175,10 @@ class AnoSegDFR():
                 
                 # tracking loss
                 losses.append(loss['total_loss'])
+                self.train_wandb_log(total_loss, epoch)
             
             if epoch % 5 == 0:
-                #                 self.save_model()
+                #self.save_model()
 
                 print('Epoch {}/{}'.format(epoch, epochs))
                 print('-' * 10)
@@ -197,6 +210,10 @@ class AnoSegDFR():
         self.save_model()
         print("Cost total time {}s".format(time.time() - start_time))
         print("Done.")
+
+    def train_wandb_log(self, loss, epoch):
+        loss = float(loss)
+        wandb.log({"epoch": epoch, "loss": loss}, step=epoch)
 
     def tracking_loss(self, epoch, loss):
         out_file = os.path.join(self.eval_path, '{}_epoch_loss.csv'.format(self.model_name))
@@ -501,8 +518,8 @@ class AnoSegDFR():
         ref: skimage.filters.threshold_otsu
         skimage.filters.threshold_li
         e.g.
-        thresh = filters.threshold_otsu(image) #返回一个阈值
-        dst =(image <= thresh)*1.0 #根据阈值进行分割
+        thresh = filters.threshold_otsu(image) #Returns a threshold
+        dst =(image <= thresh)*1.0 #Segmentation based on threshold
         """
         from skimage.filters import threshold_li
         from skimage.filters import threshold_otsu
@@ -749,10 +766,6 @@ class AnoSegDFR():
                 print(":: Batch {},".format(i), "Cost total time {}s".format(time.time() - time_start))
                 time_start = time.time()
 
-                normalize = transforms.Normalize(0.5, 1)
-                transform = transforms.Compose([transforms.ToTensor(), normalize])
-                anomaly_map = transform(anomaly_map).numpy()
-
                 masks.append(mask)
                 scores.append(anomaly_map)
                 # as array
@@ -763,7 +776,10 @@ class AnoSegDFR():
                 binary_score_maps = np.zeros_like(scores, dtype=np.bool)
                 max_th = scores.max()
                 min_th = scores.min()
-                thred = (max_th - min_th)/4
+                thred = (max_th - min_th)/2
+                #print("min_th: {}".format(min_th))
+                #print("max_th: {}".format(max_th))
+                #print("thred: {}".format(thred))
 
                 # segmentation
                 binary_score_maps[scores <= thred] = 0
@@ -830,15 +846,12 @@ class AnoSegDFR():
 
             # anomaly score
             anomaly_map = self.score(img).data.cpu().numpy()
+            anomaly_map_norm = (anomaly_map - np.min(anomaly_map))/np.ptp(anomaly_map)
 
             img_name = img_path[0][97:]
             print("Image name {}".format(img_name))
             print(":: Cost total time {}s".format(time.time() - time_start))
             time_start = time.time()
-
-            normalize = transforms.Normalize(0.5, 1)
-            transform = transforms.Compose([transforms.ToTensor(), normalize])
-            anomaly_map = transform(anomaly_map).numpy()
 
             scores.append(anomaly_map)
             scores = np.array(scores)
@@ -868,8 +881,7 @@ class AnoSegDFR():
             plt.savefig(self.save_images_path + '/' + img_name[-7:])
             plt.close(fig)
             plt.show()
-
-                
+               
     def metrics_detection(self, expect_fpr=0.3, max_step=5000):
         from sklearn.metrics import auc
         from sklearn.metrics import roc_auc_score, average_precision_score

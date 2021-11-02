@@ -20,6 +20,7 @@ def config():
                         default="train", help="train, test or unic inference")
 
     # general
+    parser.add_argument('--data_name', type=str, default="data_name", help="dataset name (type of object)")
     parser.add_argument('--model_name', type=str, default="", help="specifed model name used to save the model in the save_path")
     parser.add_argument('--save_path', type=str, default=os.getcwd(), help="model and results saving path")
     parser.add_argument('--img_size', type=int, nargs="+", default=(256, 256), help="image size (hxw)")
@@ -36,10 +37,9 @@ def config():
     parser.add_argument('--featmap_size', type=int, nargs="+", default=(256, 256), help="feat map size (hxw)")
 
     # Parameters for training, testing and inference models.
-    parser.add_argument('--data_name', type=str, default="data_name", help="dataset name (type of object)")
     parser.add_argument('--train_data_path', type=str, default=os.getcwd(), help="training data path")
     parser.add_argument('--test_data_path', type=str, default=os.getcwd(), help="testing data path")
-    parser.add_argument('--test_defect', type=str, default="test_inference_images", help="type of defect to be detected")
+    parser.add_argument('--test_defect', type=str, default="test_inference_images", help="type of defect to be detected during the testing images")
     parser.add_argument('--inference_image', type=str, default=os.getcwd(), help="input image - inference image")
 
     # CAE (Convolutional Auto-Encoder)
@@ -61,7 +61,6 @@ if __name__ == "__main__":
 
     #torch.cuda.empty_cache()
     cfg = config()
-
     #IMPORTANT: the model has to be loaded with the same bath_size used during the training (example: --batch_size 2)
 
     # dataset
