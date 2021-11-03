@@ -36,7 +36,7 @@ def get_mask_files(path):
 
 
 """
-MVTec datasets
+MVTec datasets used in anoseg_dfr.py
 """
 class NormalDataset(Dataset):
     '''
@@ -84,7 +84,8 @@ class NormalDataset(Dataset):
 
 class AbnormalDataset(Dataset):
     """
-    Only getting the abnormal data! ('good' is not included.)
+    Only getting the abnormal/defected data! ('good' is not included.)
+    Output per iteration: img
 
     """
     def __init__(self, path, normalize=True):
@@ -125,39 +126,12 @@ class AbnormalDataset(Dataset):
         return sorted(images)
 
 
-class MaskDataset(Dataset):
-    def __init__(self, path):
-        self.mask_files = self._get_mask_files(path)
-        self.len = len(self.mask_files)
-
-        # transformer
-        resize = transforms.Resize(size=(256, 256), interpolation=Image.NEAREST)
-        self.transform = transforms.Compose([resize])
-
-    def __len__(self):
-        return self.len
-
-    def __getitem__(self, idx):
-        """
-        """
-        mask = imread(self.mask_files[idx])
-        mask = resize(mask, (256, 256))
-        mask = np.expand_dims(mask, axis=0)
-        return torch.Tensor(mask)
-
-    def _get_mask_files(self, path, ext={'.jpg', '.png'}):
-        masks = []
-        #         path = "/home/jie/Datasets/mvtec-anomaly/bottle/ground_truth"
-        for root, dirs, files in os.walk(path):
-            print('loading mask files ' + root)
-            for file in files:
-                if os.path.splitext(file)[1] in ext:
-                    masks.append(os.path.join(root, file))
-        return sorted(masks)
-
-
 class TestDataset(Dataset):
+    """
+    Only getting the abnormal/defected data! ('good' is not included.)
+    Output per iteration: img, mask, img_name
 
+    """
     def __init__(self, path, normalize=True):
         self.img_files = self._get_image_files(path)
         self.len = len(self.img_files)
@@ -200,8 +174,7 @@ class TestDataset(Dataset):
                 mask = Image.open(mask_path)
                 mask = mask.resize((256,256))
                 mask = np.array(mask)
-                #mask = imread(mask_path, as_gray=True)
-                #mask = resize(mask, (256, 256))
+
         return img, mask, img_name
 
     def _get_image_files(self, path, ext={'.jpg', '.png'}):
@@ -217,7 +190,11 @@ class TestDataset(Dataset):
 
 
 class InferenceDataset(Dataset):
+    """
+    Only getting loading the image from the defined img_path variable (defected or good image).
+    Output per iteration: img, img_name
 
+    """
     def __init__(self, image_path, normalize=True):
         self.img_files = self._get_image_files(image_path)
         self.len = len(self.img_files)
@@ -249,9 +226,41 @@ class InferenceDataset(Dataset):
         images.append(image_path)
         return sorted(images)
 
+
 # ---------------------------------------------------------------------------- #
 # For supervised learning and performance boundary analysis.
 # ---------------------------------------------------------------------------- #
+
+class MaskDataset(Dataset):
+    def __init__(self, path):
+        self.mask_files = self._get_mask_files(path)
+        self.len = len(self.mask_files)
+
+        # transformer
+        resize = transforms.Resize(size=(256, 256), interpolation=Image.NEAREST)
+        self.transform = transforms.Compose([resize])
+
+    def __len__(self):
+        return self.len
+
+    def __getitem__(self, idx):
+        """
+        """
+        mask = imread(self.mask_files[idx])
+        mask = resize(mask, (256, 256))
+        mask = np.expand_dims(mask, axis=0)
+        return torch.Tensor(mask)
+
+    def _get_mask_files(self, path, ext={'.jpg', '.png'}):
+        masks = []
+        #         path = "/home/jie/Datasets/mvtec-anomaly/bottle/ground_truth"
+        for root, dirs, files in os.walk(path):
+            print('loading mask files ' + root)
+            for file in files:
+                if os.path.splitext(file)[1] in ext:
+                    masks.append(os.path.join(root, file))
+        return sorted(masks)
+
 
 # for sklearn ann (one-shot)
 class ValTestDataset(Dataset):

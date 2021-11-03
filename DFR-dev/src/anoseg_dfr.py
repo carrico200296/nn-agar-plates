@@ -18,7 +18,7 @@ from skimage.io import imsave
 from skimage import measure
 from skimage.transform import resize
 from sklearn.decomposition import PCA
-from torchvision.transforms.functional import InterpolationMode
+from torch.utils.data.sampler import SubsetRandomSampler
 
 from feature import Extractor
 from feat_cae import FeatCAE
@@ -34,9 +34,9 @@ class AnoSegDFR():
     """
     def __init__(self, cfg):
         super(AnoSegDFR, self).__init__()
-        WANDB_API_KEY = "d4ac6eb05d3b3932c222e4b9e6fe28f898830bf5"
-        wandb.login()
-        wandb.init(project="nn-agar-plates", config=cfg)
+
+        wandb.login(key = "d4ac6eb05d3b3932c222e4b9e6fe28f898830bf5",relogin = True, host = "https://api.wandb.ai")
+        wandb.init(project="nn-agar-plates", entity="carrico200296", config=cfg)
 
         #self.config = cfg
         self.cfg = wandb.config
@@ -69,12 +69,39 @@ class AnoSegDFR():
         self.train_data = self.build_dataset(is_train=True)
         self.test_data = self.build_dataset(is_train=False)
 
+        # Creating data indices for training and validation splits:
+        validation_split = .2
+        shuffle_dataset = True
+        random_seed= 42
+        dataset_size = len(self.train_data)
+        indices = list(range(dataset_size))
+        split = int(np.floor(validation_split * dataset_size))
+        if shuffle_dataset :
+            np.random.seed(random_seed)
+            np.random.shuffle(indices)
+        train_indices, val_indices = indices[split:], indices[:split]
+
+        # Creating PT data samplers and loaders:
+        train_sampler = SubsetRandomSampler(train_indices)
+        val_sampler = SubsetRandomSampler(val_indices)
+
         # dataloader
-        self.train_data_loader = DataLoader(self.train_data, batch_size=self.cfg.batch_size, shuffle=True, num_workers=2)
+        self.train_data_loader = DataLoader(self.train_data, batch_size=self.cfg.batch_size, shuffle=False, num_workers=2, sampler=train_sampler) # shuffle=True
+        self.val_data_loader = DataLoader(self.train_data, batch_size=self.cfg.batch_size, shuffle=False, num_workers=2, sampler=val_sampler) # shuffle=True
         self.test_data_loader = DataLoader(self.test_data, batch_size=1, shuffle=False, num_workers=1)
         self.eval_data_loader = DataLoader(self.train_data, batch_size=self.cfg.batch_size, shuffle=False, num_workers=2) # with cuda batch_size=10 works
         #IMPORTANT: the model has to be loaded with the same bath_size used during the training (example: --batch_size 2)
-        
+
+        # saving paths
+        self.model_name = cfg.model_name
+        self.subpath = self.data_name + "/" + self.model_name
+        self.model_path = os.path.join(self.path, "models/" + self.subpath + "/model")
+        if not os.path.exists(self.model_path):
+            os.makedirs(self.model_path)
+        self.eval_path = os.path.join(self.path, "models/" + self.subpath + "/eval")
+        if not os.path.exists(self.eval_path):
+            os.makedirs(self.eval_path)
+
         # autoencoder classifier
         self.autoencoder, self.model_name = self.build_classifier()
         if cfg.model_name != "":
@@ -84,15 +111,6 @@ class AnoSegDFR():
         # optimizer
         self.lr = cfg.lr
         self.optimizer = optim.Adam(self.autoencoder.parameters(), lr=self.lr, weight_decay=0)
-
-        # saving paths
-        self.subpath = self.data_name + "/" + self.model_name
-        self.model_path = os.path.join(self.path, "models/" + self.subpath + "/model")
-        if not os.path.exists(self.model_path):
-            os.makedirs(self.model_path)
-        self.eval_path = os.path.join(self.path, "models/" + self.subpath + "/eval")
-        if not os.path.exists(self.eval_path):
-            os.makedirs(self.eval_path)
         
         # Testing inference images
         self.test_defect = cfg.test_defect
@@ -101,7 +119,7 @@ class AnoSegDFR():
             os.makedirs(self.save_images_path)
 
     def build_classifier(self):
-        # self.load_dim(self.model_path)
+        self.load_dim()
         if self.n_dim is None:
             print("Estimating one class classifier AE parameter...")
             feats = torch.Tensor()
@@ -118,7 +136,6 @@ class AnoSegDFR():
             pca = PCA(n_components=0.90)    # 0.9 here try 0.8
             pca.fit(feats)
             n_dim, in_feat = pca.components_.shape
-            print("AE Parameter (in_feat, n_dim): ({}, {})".format(in_feat, n_dim))
             self.n_dim = n_dim
         else:
             for i, normal_img in enumerate(self.eval_data_loader):
@@ -129,6 +146,7 @@ class AnoSegDFR():
                 feat = self.extractor.feat_vec(normal_img)
             in_feat = feat.shape[1]
 
+        print("AE Parameter (in_feat, n_dim): ({}, {})".format(in_feat, self.n_dim))
         print("BN?:", self.cfg.is_bn)
         autoencoder = FeatCAE(in_channels=in_feat, latent_dim=self.n_dim, is_bn=self.cfg.is_bn).to(self.device)
         model_name = "AnoSegDFR({})_{}_l{}_d{}_s{}_k{}_{}".format('BN' if self.cfg.is_bn else 'noBN',
@@ -154,32 +172,56 @@ class AnoSegDFR():
             return
 
         start_time = time.time()
+        epoch_time = time.time()
         # Tell wandb to watch what the model gets up to: gradients, weights, and more!
         wandb.watch(self.autoencoder, self.autoencoder.loss_function, log="all", log_freq=10)
 
         # train
         iters_per_epoch = len(self.train_data_loader)  # total iterations every epoch
         epochs = self.cfg.epochs  # total epochs
+        current_val_loss = 1.0
         for epoch in range(1, epochs+1):
             self.extractor.train()
             self.autoencoder.train()
             losses = []
-            for i, normal_img in enumerate(self.train_data_loader):
-                normal_img = normal_img.to(self.device)
+            # Training step
+            for i, train_img in enumerate(self.train_data_loader):
+                train_img = train_img.to(self.device)
                 # forward and backward
-                total_loss = self.optimize_step(normal_img)
+                train_loss = self.optimize_step(train_img)
 
                 # statistics and logging
                 loss = {}
-                loss['total_loss'] = total_loss.data.item()
+                loss['train_loss'] = train_loss.data.item()
                 
                 # tracking loss
-                losses.append(loss['total_loss'])
-                self.train_wandb_log(total_loss, epoch)
+                losses.append(loss['train_loss'])
+            train_epoch_loss = np.mean(np.array(losses))
+            loss['train_loss'] = train_epoch_loss
+            self.train_wandb_log(train_epoch_loss, epoch)
             
+            # Validation step
+            for i, val_img in enumerate(self.val_data_loader):
+                val_img = val_img.to(self.device)
+                # forward and backward
+                val_loss = self.val_step(val_img)
+
+                # statistics and logging
+                loss['val_loss'] = val_loss.data.item()
+                
+                # tracking loss
+                losses.append(loss['val_loss'])
+            val_epoch_loss = np.mean(np.array(losses))
+            loss['val_loss'] = val_epoch_loss
+            self.val_wandb_log(val_epoch_loss, epoch)
+                
+            if val_epoch_loss < current_val_loss:
+                self.save_best_model(epoch=epoch)
+                current_val_loss = val_epoch_loss
+
+            '''
             if epoch % 5 == 0:
                 #self.save_model()
-
                 print('Epoch {}/{}'.format(epoch, epochs))
                 print('-' * 10)
                 elapsed = time.time() - start_time
@@ -197,14 +239,19 @@ class AnoSegDFR():
                 for tag, value in loss.items():
                     log += ", {}: {:.4f}".format(tag, value)
                 print(log)
+            '''
+            # Log(terminal) and store(.csv file) train and val epoch losses 
+            self.tracking_loss(epoch, train_epoch_loss, val_epoch_loss)
+            log = ":: Epoch [{}/{}]".format(epoch, epochs)
+            for tag, value in loss.items():
+                log += ", {}: {:.4f}".format(tag, value)
+            log += ", Cost time: {:.2f}s".format(time.time() - epoch_time)
+            epoch_time = time.time()
+            print(log)
 
             if epoch % 10 == 0:
-                # save model
                 self.save_model()
                 self.validation(epoch)
-            #print("Cost total time {}s".format(time.time() - start_time))
-            #print("Done.")
-            self.tracking_loss(epoch, np.mean(np.array(losses)))
 
         # save model
         self.save_model()
@@ -213,15 +260,19 @@ class AnoSegDFR():
 
     def train_wandb_log(self, loss, epoch):
         loss = float(loss)
-        wandb.log({"epoch": epoch, "loss": loss}, step=epoch)
+        wandb.log({"epoch": epoch, "train_loss": loss}, step=epoch)
 
-    def tracking_loss(self, epoch, loss):
+    def val_wandb_log(self, loss, epoch):
+        loss = float(loss)
+        wandb.log({"epoch": epoch, "val_loss": loss}, step=epoch)
+    
+    def tracking_loss(self, epoch, train_loss, val_loss):
         out_file = os.path.join(self.eval_path, '{}_epoch_loss.csv'.format(self.model_name))
         if not os.path.exists(out_file):
             with open(out_file, mode='w') as f:
-                f.write("Epoch" + ",loss" + "\n")
+                f.write("Epoch" + ",train_loss,val_loss" + "\n")
         with open(out_file, mode='a+') as f:
-            f.write(str(epoch) + "," + str(loss) + "\n")
+            f.write(str(epoch) + "," + str(train_loss) + "," + str(val_loss) + "\n")
 
     def optimize_step(self, input_data):
         self.extractor.train()
@@ -244,6 +295,18 @@ class AnoSegDFR():
         self.optimizer.step()
 
         return total_loss
+
+    def val_step(self, input_data):
+        self.extractor.eval()
+        self.autoencoder.eval()
+        # forward
+        input_data = self.extractor(input_data)
+        # print(input_data.size())
+        dec = self.autoencoder(input_data)
+        # loss
+        loss = self.autoencoder.loss_function(dec, input_data.detach().data)
+
+        return loss
 
     def score(self, input):
         """
@@ -368,6 +431,13 @@ class AnoSegDFR():
         visulization(img_file=name, mask_path=mask_path,
                      score_map_path=binary_score_map_path, saving_path=gt_pred_seg_image_path)
 
+    def save_best_model(self, epoch=0):
+        # save model weights
+        autoencoder_name = 'autoencoder_best.pth'
+        torch.save({'autoencoder': self.autoencoder.state_dict()},
+                   os.path.join(self.model_path, autoencoder_name))
+        #np.save(os.path.join(self.model_path, 'n_dim.npy'), self.n_dim)
+
     def save_model(self, epoch=0):
         # save model weights
         torch.save({'autoencoder': self.autoencoder.state_dict()},
@@ -393,13 +463,13 @@ class AnoSegDFR():
             print("Model loaded:", model_path)
         return True
 
-    def load_dim(self, model_path):
-        dim_path = os.path.join(model_path, 'n_dim.npy')
+    def load_dim(self):
+        dim_path = os.path.join(self.model_path, 'n_dim.npy')
         if not os.path.exists(dim_path):
             print("Dim not exists.")
             self.n_dim = None
         else:
-            self.n_dim = np.load(os.path.join(model_path, 'n_dim.npy'))
+            self.n_dim = np.load(os.path.join(self.model_path, 'n_dim.npy'))
 
     ########################################################
     #  Evaluation (testing)
@@ -571,7 +641,7 @@ class AnoSegDFR():
 
             masks.append(mask)
             scores.append(score)
-            print("Batch {},".format(i), "Cost total time {}s".format(time.time() - time_start))
+            print("   Batch {},".format(i), "Cost total time {}s".format(time.time() - time_start))
 
         # as array
         masks = np.array(masks)
