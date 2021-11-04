@@ -1,0 +1,120 @@
+wandb_version: 1
+
+_wandb:
+  desc: null
+  value:
+    cli_version: 0.12.6
+    framework: torch
+    is_jupyter_run: false
+    is_kaggle_kernel: false
+    python_version: 3.7.10
+    start_time: 1635951703
+    t:
+      1:
+      - 1
+      - 5
+      2:
+      - 1
+      - 5
+      3:
+      - 1
+      - 16
+      4: 3.7.10
+      5: 0.12.6
+      8:
+      - 5
+backbone:
+  desc: null
+  value: vgg19
+batch_size:
+  desc: null
+  value: 8
+cnn_layers:
+  desc: null
+  value:
+  - relu1_1
+  - relu1_2
+  - relu2_1
+  - relu2_2
+  - relu3_1
+  - relu3_2
+  - relu3_3
+  - relu3_4
+  - relu4_1
+  - relu4_2
+  - relu4_3
+  - relu4_4
+data_name:
+  desc: null
+  value: colonies
+device:
+  desc: null
+  value: cuda:0
+dilation:
+  desc: null
+  value: 1
+epochs:
+  desc: null
+  value: 800
+except_fpr:
+  desc: null
+  value: 0.005
+featmap_size:
+  desc: null
+  value:
+  - 256
+  - 256
+img_size:
+  desc: null
+  value:
+  - 256
+  - 256
+inference_image:
+  desc: null
+  value: /home/robotlab/Desktop/Carlos_ccdn/nn-agar-plates/DFR-dev
+is_agg:
+  desc: null
+  value: true
+is_bn:
+  desc: null
+  value: true
+kernel_size:
+  desc: null
+  value:
+  - 4
+  - 4
+latent_dim:
+  desc: null
+  value: null
+lr:
+  desc: null
+  value: 0.0001
+mode:
+  desc: null
+  value: train
+model_name:
+  desc: null
+  value: colonies_8_bath_800_epochs
+save_path:
+  desc: null
+  value: /home/robotlab/Desktop/Carlos_ccdn/nn-agar-plates/DFR-dev/DFR_trained_models
+stride:
+  desc: null
+  value:
+  - 4
+  - 4
+test_data_path:
+  desc: null
+  value: /home/robotlab/Desktop/Carlos_ccdn/nn-agar-plates/DFR-dev/dataset/colonies/test
+test_defect:
+  desc: null
+  value: test_inference_images
+thred:
+  desc: null
+  value: 0.5
+train_data_path:
+  desc: null
+  value: /home/robotlab/Desktop/Carlos_ccdn/nn-agar-plates/DFR-dev/dataset/colonies/train
+upsample:
+  desc: null
+  value: bilinear

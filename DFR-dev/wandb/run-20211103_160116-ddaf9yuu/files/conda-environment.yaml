@@ -1,0 +1,5 @@
+name: pytorch_dtai
+channels:
+  - defaults
+prefix: /home/robotlab/anaconda3/envs/pytorch_dtai/envs/pytorch_dtai
+

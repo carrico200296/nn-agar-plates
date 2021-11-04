@@ -89,7 +89,7 @@ class AnoSegDFR():
         self.train_data_loader = DataLoader(self.train_data, batch_size=self.cfg.batch_size, shuffle=False, num_workers=2, sampler=train_sampler) # shuffle=True
         self.val_data_loader = DataLoader(self.train_data, batch_size=self.cfg.batch_size, shuffle=False, num_workers=2, sampler=val_sampler) # shuffle=True
         self.test_data_loader = DataLoader(self.test_data, batch_size=1, shuffle=False, num_workers=1)
-        self.eval_data_loader = DataLoader(self.train_data, batch_size=self.cfg.batch_size, shuffle=False, num_workers=2) # with cuda batch_size=10 works
+        self.eval_data_loader = DataLoader(self.train_data, batch_size=10, shuffle=False, num_workers=2) # with cuda batch_size=10 works
         #IMPORTANT: the model has to be loaded with the same bath_size used during the training (example: --batch_size 2)
 
         # saving paths

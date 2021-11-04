@@ -1,0 +1,32 @@
+loading image files /home/robotlab/Desktop/Carlos_ccdn/nn-agar-plates/DFR-dev/dataset/colonies/train
+loading image files /home/robotlab/Desktop/Carlos_ccdn/nn-agar-plates/DFR-dev/dataset/colonies/train/good
+loading image files /home/robotlab/Desktop/Carlos_ccdn/nn-agar-plates/DFR-dev/dataset/colonies/test
+loading image files /home/robotlab/Desktop/Carlos_ccdn/nn-agar-plates/DFR-dev/dataset/colonies/test/no_cfu
+loading image files /home/robotlab/Desktop/Carlos_ccdn/nn-agar-plates/DFR-dev/dataset/colonies/test/small_cfu
+loading image files /home/robotlab/Desktop/Carlos_ccdn/nn-agar-plates/DFR-dev/dataset/colonies/test/big_cfu
+Dim not exists.
+Estimating one class classifier AE parameter...
+AE Parameter (in_feat, n_dim): (3456, 361)
+BN?: True
+model name: colonies_8_bath_800_epochs
+Loading model...
+model path: /home/robotlab/Desktop/Carlos_ccdn/nn-agar-plates/DFR-dev/DFR_trained_models/models/colonies/colonies_8_bath_800_epochs/model/autoencoder.pth
+Model not exists.
+Traceback (most recent call last):
+  File "src/main.py", line 78, in <module>
+    dfr.train()
+  File "/home/robotlab/Desktop/Carlos_ccdn/nn-agar-plates/DFR-dev/src/anoseg_dfr.py", line 207, in train
+    val_loss = self.val_step(val_img)
+  File "/home/robotlab/Desktop/Carlos_ccdn/nn-agar-plates/DFR-dev/src/anoseg_dfr.py", line 303, in val_step
+    input_data = self.extractor(input_data)
+  File "/home/robotlab/anaconda3/envs/pytorch_dtai/lib/python3.7/site-packages/torch/nn/modules/module.py", line 889, in _call_impl
+    result = self.forward(*input, **kwargs)
+  File "/home/robotlab/Desktop/Carlos_ccdn/nn-agar-plates/DFR-dev/src/feature.py", line 88, in forward
+    feat_map = self.replicationpad(feat_map)
+  File "/home/robotlab/anaconda3/envs/pytorch_dtai/lib/python3.7/site-packages/torch/nn/modules/module.py", line 889, in _call_impl
+    result = self.forward(*input, **kwargs)
+  File "/home/robotlab/anaconda3/envs/pytorch_dtai/lib/python3.7/site-packages/torch/nn/modules/padding.py", line 275, in forward
+    return F.pad(input, self.padding, 'replicate')
+  File "/home/robotlab/anaconda3/envs/pytorch_dtai/lib/python3.7/site-packages/torch/nn/functional.py", line 4016, in _pad
+    return torch._C._nn.replication_pad2d(input, pad)
+RuntimeError: CUDA out of memory. Tried to allocate 1024.00 MiB (GPU 0; 10.75 GiB total capacity; 5.05 GiB already allocated; 113.56 MiB free; 9.28 GiB reserved in total by PyTorch)
