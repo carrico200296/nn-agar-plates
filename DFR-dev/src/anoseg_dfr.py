@@ -1,5 +1,7 @@
 from cv2 import transpose
 from numpy.ma import anom, maximum
+import skimage
+from skimage.filters.thresholding import threshold_li
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -35,6 +37,7 @@ class AnoSegDFR():
     def __init__(self, cfg):
         super(AnoSegDFR, self).__init__()
 
+        os.environ["WANDB_MODE"] = cfg.wandb_mode
         wandb.login(key = "d4ac6eb05d3b3932c222e4b9e6fe28f898830bf5",relogin = True, host = "https://api.wandb.ai")
         wandb.init(project="nn-agar-plates", entity="carrico200296", config=cfg)
 
@@ -70,9 +73,9 @@ class AnoSegDFR():
         self.test_data = self.build_dataset(is_train=False)
 
         # Creating data indices for training and validation splits:
-        validation_split = .2
+        validation_split = .01
         shuffle_dataset = True
-        random_seed= 42
+        random_seed= 31
         dataset_size = len(self.train_data)
         indices = list(range(dataset_size))
         split = int(np.floor(validation_split * dataset_size))
@@ -163,7 +166,7 @@ class AnoSegDFR():
         if is_train:
             dataset = NormalDataset(normal_data_path, normalize=True)
         else:
-            dataset = TestDataset(path=abnormal_data_path, normalize=False) #originally not normalize=False
+            dataset = TestDataset(path=abnormal_data_path, normalize=True) #originally not normalize=False
         return dataset
 
     def train(self):
@@ -257,6 +260,7 @@ class AnoSegDFR():
         self.save_model()
         print("Cost total time {}s".format(time.time() - start_time))
         print("Done.")
+        wandb.finish()
 
     def train_wandb_log(self, loss, epoch):
         loss = float(loss)
@@ -322,6 +326,8 @@ class AnoSegDFR():
         dec = self.autoencoder(input)
 
         # sample energy
+        total_loss = self.autoencoder.loss_function(dec, input)
+        print("total loss:", total_loss)
         scores = self.autoencoder.compute_energy(dec, input)
         scores = scores.reshape((1, 1, self.extractor.out_size[0], self.extractor.out_size[1]))    # test batch size is 1.
         scores = nn.functional.interpolate(scores, size=self.img_size, mode="bilinear", align_corners=True).squeeze()
@@ -623,7 +629,7 @@ class AnoSegDFR():
         else:
             print("None pretrained models.")
             return
-        self.segment_evaluation_with_fpr(expect_fpr=self.cfg.except_fpr)
+        self.segment_evaluation_with_fpr(expect_fpr=self.cfg.expect_fpr)
 
     def validation(self, epoch):
         i = 0
@@ -808,6 +814,7 @@ class AnoSegDFR():
         from sklearn.metrics import auc
         from sklearn.metrics import roc_auc_score, average_precision_score
         from skimage import measure
+        from skimage.filters import threshold_otsu
         import matplotlib.pyplot as plt
         import pandas as pd
 
@@ -817,6 +824,9 @@ class AnoSegDFR():
             print("None pretrained models.")
             return
 
+        #thred_training = self.estimate_thred_with_fpr(expect_fpr=self.cfg.expect_fpr)
+        thred_training = 0.16241939616203327
+        thred_training = 0.25
         time_start = time.time()
         for i, (img, mask, img_path) in enumerate(self.test_data_loader):  # batch size is 1.
             if self.test_defect in img_path[0]:            
@@ -830,6 +840,7 @@ class AnoSegDFR():
 
                 # anomaly score
                 anomaly_map = self.score(img).data.cpu().numpy()
+                thred_otsu = threshold_otsu(anomaly_map)
 
                 img_name = img_path[0][97:]
                 print("Image name {}".format(img_name))
@@ -846,10 +857,13 @@ class AnoSegDFR():
                 binary_score_maps = np.zeros_like(scores, dtype=np.bool)
                 max_th = scores.max()
                 min_th = scores.min()
-                thred = (max_th - min_th)/2
-                #print("min_th: {}".format(min_th))
-                #print("max_th: {}".format(max_th))
-                #print("thred: {}".format(thred))
+                if max_th <= thred_training:
+                    thred = thred_training
+                else:
+                    thred = thred_otsu
+                print("min_th: {}".format(min_th))
+                print("max_th: {}".format(max_th))
+                print("thred: {}".format(thred))
 
                 # segmentation
                 binary_score_maps[scores <= thred] = 0
@@ -859,6 +873,16 @@ class AnoSegDFR():
                 masks[masks <= 0.5] = 0
                 masks[masks > 0.5] = 1
                 masks = masks.astype(np.bool)
+                
+                # auc score (per pixel level) for segmentation
+                seg_auc_score = roc_auc_score(masks.ravel(), scores.ravel())
+                seg_pr_score = average_precision_score(masks.ravel(), scores.ravel())
+                # metrics over all data
+                print(f":: Seg AUC: {seg_auc_score:.4f}")
+                print(f":: Seg PR: {seg_pr_score:.4f}")
+
+                if self.test_defect == "no_cfu":
+                    masks = np.zeros_like(masks, dtype=np.bool)
 
                 # Display grount truth, anomaly score map and anomaly binary map
                 fig, axs = plt.subplots(nrows=1, ncols=4, figsize=(12, 4))
@@ -878,14 +902,6 @@ class AnoSegDFR():
                 plt.savefig(self.save_images_path + '/' + img_name[-7:])
                 plt.close(fig)
                 plt.show()
-
-                # auc score (per pixel level) for segmentation
-                seg_auc_score = roc_auc_score(masks.ravel(), scores.ravel())
-                seg_pr_score = average_precision_score(masks.ravel(), scores.ravel())
-                # metrics over all data
-                print(f":: Seg AUC: {seg_auc_score:.4f}")
-                print(f":: Seg PR: {seg_pr_score:.4f}")
-                
             else:
                 continue
 
@@ -893,6 +909,7 @@ class AnoSegDFR():
         from sklearn.metrics import auc
         from sklearn.metrics import roc_auc_score, average_precision_score
         from skimage import measure
+        from skimage.filters import threshold_otsu
         import matplotlib.pyplot as plt
         import pandas as pd
         from MVTec import InferenceDataset
@@ -903,12 +920,15 @@ class AnoSegDFR():
             print("None pretrained models.")
             return
 
-        time_start = time.time()          
+        time_start = time.time()
         scores = []
         # data
-        inference_dataset = InferenceDataset(inference_image_path)
+        inference_dataset = InferenceDataset(inference_image_path, normalize=True)
         inference_data_loader = DataLoader(inference_dataset, batch_size=1, num_workers=1)
 
+        #thred_training = self.estimate_thred_with_fpr(expect_fpr=self.cfg.expect_fpr)
+        thred_training = 0.16241939616203327
+        thred_training = 0.25
         for i, (img, img_path) in enumerate(inference_data_loader):  # batch size is 1.
             input_image = Image.open(img_path[0])
             input_image = input_image.resize((256,256))
@@ -916,7 +936,8 @@ class AnoSegDFR():
 
             # anomaly score
             anomaly_map = self.score(img).data.cpu().numpy()
-            anomaly_map_norm = (anomaly_map - np.min(anomaly_map))/np.ptp(anomaly_map)
+            #anomaly_map_norm = (anomaly_map - np.min(anomaly_map))/np.ptp(anomaly_map)
+            thred_otsu = threshold_otsu(anomaly_map)
 
             img_name = img_path[0][97:]
             print("Image name {}".format(img_name))
@@ -930,8 +951,15 @@ class AnoSegDFR():
             binary_score_maps = np.zeros_like(scores, dtype=np.bool)
             max_th = scores.max()
             min_th = scores.min()
-            thred = (max_th - min_th)/4
-            
+
+            if max_th <= thred_training:
+                thred = thred_training
+            else:
+                thred = thred_otsu
+            print("min_th: {}".format(min_th))
+            print("max_th: {}".format(max_th))
+            print("thred: {}".format(thred))
+
             # segmentation
             binary_score_maps[scores <= thred] = 0
             binary_score_maps[scores > thred] = 1

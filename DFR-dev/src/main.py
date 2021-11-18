@@ -51,8 +51,10 @@ def config():
 
     # segmentation evaluation
     parser.add_argument('--thred', type=float, default=0.5, help="threshold for segmentation")
-    parser.add_argument('--except_fpr', type=float, default=0.005, help="fpr to estimate segmentation threshold")
+    parser.add_argument('--expect_fpr', type=float, default=0.001, help="FPR to estimate segmentation threshold")
 
+    # wandb mode
+    parser.add_argument('--wandb_mode', type=str, default="run", help="run by default which saves results to wandb. set offline to save your run metadata locally")
     args = parser.parse_args()
 
     return args
